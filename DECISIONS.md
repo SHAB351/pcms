@@ -548,3 +548,108 @@ règles de validation ou d'historique n'a été exercée en base** — elles son
 **Piège à ne pas répéter :** une Server Action n'est pas reproductible depuis
 Node (voir §22). Le parcours de l'assistant se vérifie avec un vrai navigateur,
 d'où `scripts/verifier-assistant.mjs`, sur le modèle de `verifier-navigateur.mjs`.
+
+---
+
+## 24. Équipe d'agents et travail autonome — 10 novembre 2026
+
+**Le problème posé.** Le travail restant (tests, audits, documentation) est
+borné et vérifiable, mais il demande du temps suivi. Un agent lancé sur ce dépôt
+doit donc être **contrôlable** (on sait ce qu'il fait, et sa preuve est une
+commande, pas une affirmation), **économe** (le plafond n'est pas une intention)
+et **fiable** (l'état survit à la session). Une équipe de cinq agents a été
+créée : `cto`, `developpeur`, `qa`, `securite`, `documentation`, avec deux skills
+projet (`pcms-conventions`, `pcms-verification`), deux commandes
+(`/session-autonome`, `/etat-session`) et quatre fiches de suivi — `TACHES.md`,
+`SESSION.md`, `JOURNAL.md`, `RAPPORT.md`.
+
+**Décisions structurantes :**
+
+1. **Le CTO orchestre, il ne code pas.** Il choisit *une* tâche, la délègue au
+   bon agent, exige la preuve et tient les fiches. Seule exception, pour la
+   dépense : une retouche de moins d'une trentaine de lignes sur un seul fichier,
+   qu'il fait lui-même plutôt que de payer une délégation. Un orchestrateur qui
+   code devient un développeur qui oublie d'orchestrer.
+2. **Un fichier n'a qu'un seul auteur à la fois.** Ni deux sous-agents, ni le
+   fil principal pendant qu'un sous-agent y travaille. Le CTO attend la fin
+   d'une tâche avant d'en déléguer une qui recoupe les mêmes fichiers, et
+   répartit les tâches sur des fichiers indépendants. Un `git status` qui montre
+   un fichier hors de la liste autorisée pour la tâche en cours vaut tâche
+   **écartée**, pas tâche réussie. Cette règle a un coût : elle interdit le
+   parallélisme sur un même fichier, elle ne l'interdit pas sur des fichiers
+   distincts.
+3. **Les fiches de suivi vivent dans `docs/autonomie/`, jamais sous `.claude/`.**
+   L'outil traite `.claude/` comme de la configuration et **refuse toute écriture
+   d'agent** dans ce dossier (« sensitive file »). L'essai du 2026-11-10 l'a
+   établi quatre fois : le code était livré, mais l'état, le journal et le
+   rapport étaient impossibles à écrire. Les fichiers de *configuration* des
+   agents et des skills restent, eux, sous `.claude/`.
+4. **`PROUVÉ` veut dire « une commande l'a montré », pas « l'agent l'affirme ».**
+   Un statut ne monte jamais de `ÉCRIT` à `PROUVÉ` sans une ligne de journal qui
+   contient la commande et sa sortie. Le vocabulaire est fermé : `PROUVÉ`,
+   `ÉCRIT`, `À FAIRE`, `EN COURS`, `BLOQUÉ-HUMAIN`.
+5. **L'indépendance des contrôleurs est structurelle, pas déclarative.** `qa` et
+   `securite` n'ont pas l'outil `Write` : ils ne peuvent pas corriger ce qu'ils
+   jugent, donc ils ne peuvent pas maquiller un constat. Un contrôleur qui
+   répare finit par juger ce qu'il a réparé.
+6. **Le plafond de dépense n'est technique que sous `-p`.** `--max-budget-usd`
+   n'agit qu'avec `--print`, et là il **coupe réellement** ; `claude --bg` n'a
+   aucun plafond. Le plafond s'applique **par processus** : deux lancements
+   simultanés valent deux fois le plafond. Toute autre forme d'arrêt sur budget
+   est une estimation que l'agent doit reporter lui-même, écrite comme telle.
+7. **`--allowedTools` fait partie du contrat de lancement.** Sans lui, en mode
+   `-p`, **toute** commande `Bash` passe par une autorisation que personne
+   n'accorde, et la session ne peut rien prouver. L'option est *variadique* :
+   une seule occurrence, liste séparée par des virgules, et le prompt passé par
+   here-string (ou avant les options).
+8. **Le modèle réel de cette machine n'est pas Sonnet.** Les cinq agents portent
+   `model: sonnet` dans leur frontmatter, mais ce champ **ne s'applique pas**
+   quand l'agent sert de session (`--agent cto`), et `~/.claude/settings.json`
+   route l'API vers un service compatible avec
+   `ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-flash`. L'alias `sonnet` résout donc
+   vers `deepseek-flash` : rien dans ce dépôt ne doit présenter l'équipe comme
+   travaillant sur Sonnet. Les deux seules choses que `--model sonnet` garantit
+   sont la stabilité du choix et l'absence d'héritage d'un défaut non maîtrisé.
+9. **Aucun travail d'arrière-plan non surveillé.** Une session est lancée,
+   surveillée et close par quelqu'un. Elle **s'arrête net** sur une autorisation
+   qu'elle n'a pas le droit de se donner — c'est un comportement attendu, pas une
+   panne. Interdits absolus pendant une session : `git push`, déploiement,
+   publication, migration exécutée, secret affiché, politique RLS touchée, toute
+   modification du module Documents.
+10. **Une heure traite 3 à 5 tâches, pas sept.** Le CTO choisit, il ne coche
+    pas. Si la file est épuisée avant l'échéance, la session se **clôt** : on
+    n'invente pas de travail pour remplir le temps.
+
+**Vérifié réellement :**
+
+- écriture d'un agent dans `docs/autonomie/` — sonde `claude -p --agent cto` :
+  fichier créé, réponse `ECRIT` ;
+- plafond de dépense coupé par le CLI — `claude -p --max-budget-usd 0.01` →
+  `Error: Exceeded USD budget (0.01)`, code de sortie 1 ;
+- syntaxe `--allowedTools` — `Bash(npm run lint:*)` laisse passer `npm run lint`
+  (`> eslint .`) et `Bash(node --version:*)` laisse passer `node --version`
+  (`v24.18.0`) ;
+- essai de 30 minutes : **2 tâches prouvées** (T-01, T-02), 4 min 07 s,
+  **1,98 USD**, soit ~29 USD/h ;
+- état du dépôt au 10 novembre : `npm test` **60/60** (dont les 9 tests de T-04),
+  `typecheck` et `lint` sans diagnostic.
+
+**Ce qui a échoué, et qu'il ne faut pas maquiller :**
+
+- **La session d'une heure n'a rien prouvé.** Lancée sans `--allowedTools`, elle
+  a reçu `This command requires approval` à chaque vérification et s'est close
+  au bout de 2 min 50 s. Le défaut était dans la ligne de lancement, pas dans
+  l'installation.
+- **Un processus mal arrêté a travaillé en parallèle.** L'outil d'arrêt a tué
+  l'enveloppe shell, pas `claude.exe` : l'orphelin (PID 10064) a continué huit
+  minutes, écrit trois fichiers et délégué une tâche, en concurrence avec un
+  second lancement, et les deux ont écrit dans **le même fichier de trace**. Le
+  CTO avait raison de signaler un écrivain concurrent ; il s'agissait de moi.
+  Coût réel de la phase : **≈ 4,65 USD** (1,51 + 3,14) pour une exposition
+  théorique de 20 USD.
+- **Le modèle annoncé n'est pas celui qui sert** (décision 8).
+
+**Pièges à ne pas répéter :** écrire une fiche de suivi sous `.claude/` ;
+lancer `-p` sans `--allowedTools` ; arrêter une session en tuant le wrapper ;
+lancer deux sessions à la fois sur le même dépôt ; passer le prompt après
+`--allowedTools` sans here-string.

@@ -12,8 +12,8 @@ date -u +%FT%TZ && date -u +%s
 git branch --show-current && git status --short && git log --oneline -3
 ```
 
-Puis lis `.claude/autonomie/SESSION.md`, les cinq dernières lignes de
-`.claude/autonomie/JOURNAL.md`, et le tableau de `TACHES.md`.
+Puis lis `docs/autonomie/SESSION.md`, les cinq dernières lignes de
+`docs/autonomie/JOURNAL.md`, et le tableau de `docs/autonomie/TACHES.md`.
 
 Réponds en six lignes maximum :
 

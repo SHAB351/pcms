@@ -28,20 +28,68 @@ React 19, Tailwind 4, Supabase, Zod 4, TypeScript strict, **interface en frança
 
 Cinq agents dans `.claude/agents/` (`cto`, `developpeur`, `qa`, `securite`,
 `documentation`), deux skills projet, deux commandes (`/session-autonome`,
-`/etat-session`), et quatre fiches d'autonomie dans `.claude/autonomie/` :
+`/etat-session`), et quatre fiches d'autonomie dans `docs/autonomie/` :
 `TACHES.md` (quoi faire), `SESSION.md` (où on en est), `JOURNAL.md` (ce qui a été
 fait, en ajout seul), `RAPPORT.md` (le bilan).
+
+**Pourquoi `docs/` et pas `.claude/`** : l'outil traite `.claude/` comme de la
+configuration et **refuse toute écriture d'agent** dans ce dossier (« sensitive
+file »). Les fiches y étaient, et l'essai du 2026-11-10 a montré la conséquence :
+code livré, mais état, journal et rapport impossibles à écrire. Ne les remets
+jamais sous `.claude/`.
 
 ## Session autonome
 
 ```bash
-claude --bg --permission-mode acceptEdits --agent cto "/session-autonome 4"
+claude -p --agent cto --model sonnet --permission-mode acceptEdits \
+  --max-budget-usd 10 \
+  --allowedTools "Read,Grep,Glob,Edit,Write,Bash(npm test:*),Bash(npm run typecheck:*),Bash(npm run lint:*),Bash(node --test:*)" \
+  --output-format text \
+  > docs/autonomie/session.log 2>&1 <<< "SESSION AUTONOME D'UNE HEURE..."
 ```
 
-Suivre : `claude agents` puis `claude logs <id>` — reprendre la main : `claude attach <id>`
-— arrêter : `claude stop <id>`.
+**`--allowedTools` n'est pas optionnel.** Sans lui, en mode `-p`, **toute**
+commande `Bash` passe par une autorisation que personne n'accorde : la session
+reçoit `This command requires approval` à chaque vérification et ne peut rien
+prouver. C'est la cause exacte de l'échec de la session du 2026-11-10. Une seule
+occurrence de l'option, liste séparée par des virgules : elle est *variadique* et
+avale aussi le prompt positionnel, d'où le here-string (`<<<`) ci-dessus.
+Syntaxe vérifiée le 2026-11-10 : `Bash(npm run lint:*)` a bien laissé passer
+`npm run lint` (`> eslint .`), et `Bash(node --version:*)` a laissé passer
+`node --version` (`v24.18.0`).
 
-La session tourne dans un processus d'arrière-plan géré par Claude Code : elle
-survit à la fermeture du terminal, mais **elle s'arrête net** si elle bute sur une
-autorisation qu'elle n'a pas le droit de se donner. Ne compte pas dessus pour
-avancer sans surveillance sur une action sensible.
+`-p` (impression) est la seule forme qui **impose** un plafond de dépense :
+`--max-budget-usd` n'agit qu'avec `--print`. Avec `claude --bg`, il n'y a **aucun
+plafond technique** — seulement l'échéance de temps écrite dans `SESSION.md`. Le
+plafond s'applique **par processus** : deux lancements simultanés valent deux
+fois le plafond.
+
+**`--model sonnet` est obligatoire.** Le champ `model:` du frontmatter d'un agent
+ne s'applique **pas** quand cet agent sert de session (`--agent cto`) : une
+session lancée sans `--model` hérite du modèle par défaut de la machine
+(`deepseek-flash` ici, que Claude Code ne reconnaît pas et dont il suppose la
+fenêtre de contexte). Constaté deux fois le 2026-11-10.
+
+**Mais `sonnet` n'est pas Sonnet sur ce poste.** `~/.claude/settings.json` route
+l'API vers un service compatible (`ANTHROPIC_BASE_URL`,
+`ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-flash`) : l'alias résout vers
+`deepseek-flash`. `--model sonnet` sert donc à éviter un défaut non maîtrisé, pas
+à obtenir Sonnet. Ne jamais présenter cette machine comme travaillant sur Sonnet.
+
+`--bg` exige en plus que le dossier soit approuvé (confiance), ce que `-p` ne
+demande pas. En contrepartie, `-p` n'a pas de `claude attach` : on arrête la
+session en tuant le processus.
+
+**Arrêter veut dire tuer `claude.exe`, pas l'enveloppe shell.** Le 2026-11-10, un
+arrêt « réussi » n'a tué que le wrapper : le processus a continué huit minutes et
+a écrit dans le dépôt pendant qu'un second lancement y travaillait. Vérifier
+après tout arrêt :
+
+```powershell
+claude agents --json            # doit ne plus lister de session dans Dev\pcms
+Get-Process claude -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+La session travaille sur le dépôt et **s'arrête net** sur une autorisation qu'elle
+n'a pas le droit de se donner : ne compte pas dessus pour avancer sans
+surveillance sur une action sensible.
