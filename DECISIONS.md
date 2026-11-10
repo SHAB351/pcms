@@ -653,3 +653,127 @@ projet (`pcms-conventions`, `pcms-verification`), deux commandes
 lancer `-p` sans `--allowedTools` ; arrêter une session en tuant le wrapper ;
 lancer deux sessions à la fois sur le même dépôt ; passer le prompt après
 `--allowedTools` sans here-string.
+
+---
+
+## 25. Sonde `/api/sante` — divulgation de la configuration IA
+
+**Statut : DÉCISION VALIDÉE le 2026-11-10 par le propriétaire — option 2.**
+
+**La règle retenue.** La route publique `/api/sante` n'expose **que** `status`
+et `supabaseConfigured`. Les métadonnées du fournisseur d'IA (identifiant,
+libellé, caractère local, présence d'une clé, indicateur de repli) **restent
+internes** : elles demeurent disponibles dans l'application via
+`getProviderInfo()` (`src/lib/ai/registry.ts:54-61`), que la route n'importe
+plus. Le registre et son fonctionnement n'ont pas été touchés.
+
+**Le fait qui a motivé la décision.** `GET /api/sante`
+(`src/app/api/sante/route.ts`) est **publique et non authentifiée** — c'est
+délibéré, pour qu'un moniteur externe puisse l'appeler sans session. Jusqu'au
+2026-11-10, sa réponse portait un objet `ai` construit par `getProviderInfo()`,
+plus un champ `aiProvider` conservé pour les moniteurs existants.
+
+**Ce que la route exposait avant la décision, et ce que cela apprenait à un tiers :**
+
+| Champ | Valeur réelle transmise | Ce que cela révèle |
+| --- | --- | --- |
+| `id`, `aiProvider` | `"mock"` ou `"openai-compatible"` | la famille de fournisseur |
+| `label` | `Service externe (${model})` ou `Modèle local (${model})` (`providers/openai-compatible.ts:56-58`) | **le nom exact du modèle configuré** |
+| `isLocal` | booléen | si le point d'accès est local ou distant |
+| `isConfigured` | `Boolean(baseUrl && model && (apiKey \|\| local))` (`openai-compatible.ts:51`) | **si une clé d'API est présente** |
+| `fallback` | booléen | si `AI_PROVIDER` porte une valeur inconnue |
+
+**Ce qui ne sortait pas non plus à l'époque — vérifié par lecture.** Ni la clé
+d'API, ni l'URL de base, ni un jeton, ni un en-tête. `getProviderInfo()` ne
+transmet que `id`, `label`, `isLocal`, `isConfigured`, `fallback`, et la route
+n'en recopiait que ces cinq champs plus `provider.id` (ancienne version de
+`sante/route.ts`). Le champ `configurationHint` — celui qui nomme `AI_BASE_URL`,
+`AI_MODEL`, `AI_API_KEY` (`openai-compatible.ts:63`) — **n'était pas transmis**.
+
+**Ce que les tests prouvaient alors, et ce qu'ils prouvent maintenant.** Avant
+la décision, `tests/sante.test.mjs` (3 tests) exécutait la route avec
+`getProviderInfo` **bouchonné** : il prouvait que la route ne recopiait que les
+cinq champs prévus et n'ajoutait ni clé ni URL (clé factice `sk-TEST-SECRET`,
+hôte RFC 2606 `secret.example`). Il ne prouvait **pas** ce que contenait la
+vraie `label` — cela avait été établi par lecture de
+`providers/openai-compatible.ts:56-58`, où `label` n'interpole que `model`.
+
+Depuis la décision, ce bouchon a disparu du test, et c'est un gain de preuve :
+la route n'importe plus le registre, donc le contrôle porte sur les
+**spécificateurs d'importation** (`['@/lib/config', 'next/server']`). La partie
+« aucune métadonnée IA » ne dépend plus d'aucun bouchon — elle est structurelle.
+**Aucun test n'exerce toujours le registre réel** ; il n'en a plus besoin depuis
+cette route, mais cela reste vrai pour l'écran `/assistant`, qui l'appelle
+directement.
+
+**Le risque, nommé sans l'exagérer.** Ce n'est pas une fuite de secret, c'est
+une **divulgation d'information de configuration** à un appelant non
+authentifié : un tiers apprend quel modèle sert et si le service est armé. Cela
+permet de viser des techniques d'injection ou de contournement connues pour ce
+modèle précis, et de savoir qu'une organisation expose publiquement un point
+d'entrée IA. La portée reste bornée : la sonde n'exécute aucune génération, ne
+lit aucune donnée et ne permet aucune écriture.
+
+**Ce qui a été appliqué (option 2, 2026-11-10).**
+
+- `src/app/api/sante/route.ts` : la réponse ne contient plus que `status` et
+  `supabaseConfigured`. `timestamp` a été retiré au même titre — la consigne
+  était « uniquement ». Les codes HTTP ne changent pas : `200` si Supabase est
+  configuré, `503` sinon.
+- L'import de `@/lib/ai/registry` a été retiré de la route. Ce n'est pas un
+  détail de propreté : tant que la route n'importe pas le registre, elle **ne
+  peut pas** en recopier un champ, quel que soit l'état du fournisseur.
+- `tests/sante.test.mjs` : réécrit autour de six tests, dont un contrôle des
+  spécificateurs d'importation (`['@/lib/config', 'next/server']`) et un
+  contrôle que le registre exporte toujours `getProviderInfo` et `getProvider`.
+
+**Conséquence à assumer.** Les moniteurs externes qui lisaient `ai`, `label`,
+`isConfigured`, `id`, `aiProvider`, `isLocal` ou `fallback` ne reçoivent plus
+ces champs. Aucun client de ce dépôt ne les consomme (recherche `api/sante` et
+`getProviderInfo` : la seule autre lecture de `getProviderInfo` est
+`src/app/(app)/assistant/page.tsx:40`, un appel direct, hors de cette route).
+Un moniteur qui veut superviser l'IA devra passer par une sonde authentifiée,
+qui n'existe pas encore.
+
+**Audit des consommateurs — 2026-11-10.** Recherche menée sur tout le dépôt,
+champs `ai`, `aiProvider`, `timestamp`, `label`, `isConfigured` :
+
+- **Aucun workflow GitHub** (`.github/` absent), **aucune configuration de
+  déploiement** (ni `Dockerfile`, ni `vercel.json`, ni `netlify.toml`, ni
+  `fly.toml`, ni `render.yaml`, ni `Procfile`), **aucune configuration de
+  supervision**. Les seuls `.toml` du dépôt sont les définitions d'agents sous
+  `.codex/`.
+- **Aucun `fetch(` vers `/api/sante`** dans `src/` : le seul `fetch(` de `src/`
+  est l'appel du fournisseur (`providers/openai-compatible.ts:88`).
+- **Aucun script de `scripts/`** ne cite `/api/sante`. Les quatre
+  (`verifier-admin`, `verifier-assistant`, `verifier-documents`,
+  `verifier-navigateur`) pilotent l'application, pas la sonde. `README.md`
+  décrit la route (`:176`, `:408`) et se limite à ses codes HTTP.
+- Les lectures de `label`, `isConfigured` et `isLocal` viennent d'appels
+  **directs** à `getProviderInfo()` (`assistant/page.tsx:40`,
+  `parametres/page.tsx:94`) ou de props qui en dérivent — jamais de la réponse de
+  la route.
+- `timestamp` n'apparaît plus que dans les colonnes SQL `timestamptz` et dans la
+  documentation de cette décision.
+
+**Conclusion, bornée à ce qui a été observé.** Aucun consommateur des champs
+supprimés n'est **identifié dans ce dépôt**, et aucune supervision externe n'y
+est **configurée ni documentée**. Cela n'établit pas qu'aucun consommateur
+externe ne puisse exister : un moniteur peut vivre hors du dépôt, et le code
+supprimé revendiquait explicitement des « moniteurs existants » sans en nommer
+aucun. La vérification qui manquerait — interroger l'hébergeur, le service de
+supervision et les journaux d'accès — n'est pas accessible depuis ce dépôt.
+
+**Options rejetées, conservées pour la mémoire de l'arbitrage :**
+
+- **Option 1 d'origine — publier en l'état.** Écartée : le nom exact du modèle
+  devenait public.
+- **Option 3 d'origine — variante médiane** (`id`, `isLocal`, `fallback`
+  conservés ; `label` et `isConfigured` retirés). Écartée : `id` et `isLocal`
+  suffisent déjà à décrire la posture de déploiement à un anonyme.
+- **Option 4 d'origine — jeton de supervision.** Écartée : elle règle le
+  contrôle d'accès mais laisse fuiter le contenu, et ajoute un secret de plus à
+  administrer.
+
+Une sonde authentifiée pour la supervision IA reste **à construire** si le
+besoin apparaît ; c'est un travail distinct, non engagé ici.

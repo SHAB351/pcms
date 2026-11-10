@@ -1,7 +1,8 @@
 # Avis de sécurité — Assistant IA
 
 - **Date** : 2026-11-10
-- **Branche** : `feature/assistant-ia` (travail non commité)
+- **Branche** : `feature/assistant-ia` (travail non commité) — *état au moment de
+  l'analyse ; depuis commité en `b3d49bf` et poussé sur `origin/feature/assistant-ia`.*
 - **Périmètre fermé** : `src/lib/ai/confidentiality.ts`, `src/lib/actions/assistant.ts`,
   `src/lib/data/assistant.ts`, `src/lib/validation/schemas.ts`.
 - **Contexte lu sans être jugé** : `src/lib/ai/registry.ts`, `src/lib/ai/types.ts`,
@@ -102,6 +103,61 @@ BLOQUANT, mais la structure ne fait pas du document une donnée inerte. *Preuve
 non couverte : comportement réel du modèle non testé ; `operations.ts` est hors
 de la liste fermée mais la question l'exige.*
 
+### Mise à jour du 2026-11-10 — correction T-08 (postérieure à l'analyse ci-dessus)
+
+L'analyse de Q4 est **conservée telle quelle** : elle décrit l'état du code au
+moment de la revue. Ce qui suit la complète, ne la réécrit pas.
+
+**Ce qui a changé dans le code.** `buildPrompt` n'utilise plus un délimiteur
+fixe. `sourceFence(text)` (`src/lib/ai/operations.ts:155-159`) mesure la plus
+longue suite de guillemets du texte et renvoie `'"'.repeat(max(3, plusLongue + 1))` ;
+la borne d'ouverture et la borne de fermeture sont la même variable `fence`
+(`operations.ts:177-178`). La propriété tenue est mécanique : le délimiteur est
+**plus long que toute suite de guillemets du texte**, donc il ne peut pas
+apparaître dans le texte — ni comme suite contiguë, ni à cheval sur une
+frontière, puisque cela exigerait une suite d'au moins `plusLongue + 1`.
+
+**Ce qui est corrigé (prouvé).** La sortie du bloc par un document contenant
+`"""` n'est plus possible. Quatre tests de `tests/assistant-preuve.test.mjs`
+(T-08) le montrent, et `npm test` les exécute :
+
+- « un texte contenant `"""` est encadré par un délimiteur absent du texte » ;
+- « le délimiteur dépasse toute suite de guillemets, quelle que soit sa
+  longueur » (suite de six guillemets → délimiteur de sept) ;
+- « sans suite de guillemets dangereuse, le délimiteur reste `"""` »
+  (rétrocompatibilité, le test antérieur de `assistant.test.mjs` passe inchangé) ;
+- « la garde tombe si le délimiteur redevient fixe » — mutation en mémoire :
+  en réécrivant `const fence = '"""';`, le compte des bornes passe de 2 à 3 et
+  le test échoue.
+
+Chaîne complète au 2026-11-10 : `npm test` → **79/79**, `npm run typecheck` →
+code 0, `npm run lint` → code 0.
+
+**Ce qui reste — l'injection de prompt n'est pas éteinte.** Le délimiteur ne
+protège que la *syntaxe* du bloc. Il n'empêche nullement un document d'écrire,
+**à l'intérieur** de la zone délimitée, « ignore les instructions précédentes » :
+le modèle lit toujours ce texte comme du contenu, mais rien ne garantit qu'il
+ne lui obéisse pas. Les protections sémantiques restent celles qui existaient :
+consigne système dans un message `role: system` distinct
+(`openai-compatible.ts:97-100`), texte placé en fin de message, et surtout
+`deciderBrouillon` exigeant `isAdmin()` (`assistant.ts:265`) — donc **aucune
+publication automatique**. La sortie du bloc est fermée ; l'influence sur le
+modèle ne l'est pas.
+
+**Ce qui n'est pas vérifié en environnement réel.** Aucun appel réseau n'a été
+exercé dans cette mission : le comportement d'un fournisseur (externe ou local)
+face à un document hostile reste **non observé**. Les tests sont statiques et
+unitaires ; ils prouvent la construction du prompt, pas la réaction du modèle.
+`input.brief` (`operations.ts:173`) n'est, lui, pas délimité — c'est le texte du
+demandeur lui-même, donc pas une escalade de privilège, mais cela montre que la
+frontière protégée est bien « le document d'autrui », pas « tout texte ».
+
+**Ce que cette mise à jour ne change pas.** Les autres avertissements de Q1, Q3,
+Q5 et Q6 restent ouverts, y compris `external_sent` auto-déclaré (désormais
+consigné comme T-09, `À FAIRE`). Le **BLOQUANT d'ordre de déploiement** de Q5
+est intact : `0003_assistant_ia.sql` n'a pas été exécutée et cette revue n'a
+aucun moyen de prouver le contraire.
+
 ## Q5 — Contrôle d'accès des Server Actions
 
 **RAS — toutes les actions vérifient session et rôle côté serveur avant toute
@@ -192,7 +248,9 @@ usage réel : (1) **BLOQUANT d'ordre de déploiement** — appliquer
 `0003_assistant_ia.sql` avant d'exposer le module, sous peine d'auto-approbation
 par PATCH REST et de validation qui survit à une retouche ; (2) la délimitation
 du texte source (`"""` non échappé) laisse une injection de prompt possible par
-un document, bornée par la relecture admin. Le reste relève d'avertissements de
+un document, bornée par la relecture admin — **partiellement corrigée depuis
+(T-08, voir la mise à jour en Q4 : la sortie du bloc est fermée, l'influence
+sémantique sur le modèle ne l'est pas)**. Le reste relève d'avertissements de
 robustesse (URL de base dans un message d'erreur, erreurs Postgres recopiées,
 `source_text` visible de tout éditeur, pas de plafond à `readDocumentSource`).
 
@@ -220,26 +278,57 @@ Extrait réel (`node --test`) :
 
 **Constat.** La sonde `GET /api/sante` (`src/app/api/sante/route.ts`) est
 **publique et non authentifiée** — c'est délibéré, pour qu'un moniteur externe
-puisse l'appeler. Depuis la session du 2026-11-10, sa réponse contient un objet
-`ai` : `id`, `label`, `isLocal`, `isConfigured`, `fallback`, ainsi que
-`aiProvider`. Or `label` **contient le nom du modèle** configuré, et
-`isConfigured` **indique si une clé est présente**.
+puisse l'appeler. Jusqu'au 2026-11-10, sa réponse contenait un objet `ai` :
+`id`, `label`, `isLocal`, `isConfigured`, `fallback`, ainsi que `aiProvider`.
+Or `label` **contenait le nom du modèle** configuré, et `isConfigured`
+**indiquait si une clé est présente**.
 
 **Ce que ce n'est pas.** Ni la clé, ni l'URL de base, ni un jeton : `getProviderInfo()`
 ne transmet rien de tel, et cette note ne contredit pas le « RAS » de Q3 sur les
 secrets. La divulgation porte sur une **information de configuration**, pas sur
 un secret.
 
-**Décision à prendre avant mise en production.** Un tiers non authentifié apprend
-quel modèle sert et si l'IA est configurée. Trois options, à trancher
-explicitement :
+**Décision — 2026-11-10, option 2, validée par le propriétaire**
+(`DECISIONS.md` §25). La route publique n'expose plus que `status` et
+`supabaseConfigured`. Les métadonnées du fournisseur restent internes, via
+`getProviderInfo()`, que la route **n'importe plus**. Le registre n'a pas été
+modifié.
 
-1. publier ces champs en l'état, en assumant cette transparence ;
-2. réduire la réponse publique à `status` + `supabaseConfigured`, et déplacer le
-   détail du fournisseur vers une sonde authentifiée ou réservée au réseau
-   interne ;
-3. protéger la route par un jeton de supervision.
+### Risque corrigé — et ce qui le prouve
 
-Tant que ce choix n'est pas consigné dans `DECISIONS.md`, la route ne doit pas
-être exposée sur l'internet. **Aucun code n'a été modifié** au moment de cette
-note : elle documente, elle n'arbitre pas.
+La divulgation est fermée **structurellement**, pas par filtrage : la route ne
+charge plus le registre d'IA, donc elle ne peut en recopier aucun champ, quel
+que soit l'état du fournisseur. `tests/sante.test.mjs` (6 tests) le vérifie à
+trois niveaux :
+
+1. **Forme exacte de la réponse** — `Object.keys(body).sort()` vaut exactement
+   `['status', 'supabaseConfigured']`, en `200` comme en `503`.
+2. **Absence nominative** — `ai`, `label`, `isConfigured`, `isLocal`, `fallback`,
+   `aiProvider`, `id` sont absents ; ni `openai-compatible`, ni `mock`, ni un nom
+   de modèle n'apparaissent dans la réponse sérialisée.
+3. **Preuve structurelle** — les spécificateurs d'importation de la route valent
+   exactement `['@/lib/config', 'next/server']`, sans `require` ni `import()`
+   dynamique. C'est cette assertion qui rend les deux précédentes solides : un
+   bouchon peut mentir, une liste d'imports ne le peut pas.
+
+Le test vérifie aussi qu'aucune clé, aucun jeton (`Bearer-TEST-TOKEN`) et aucune
+URL (`https://secret.example/v1`, hôte RFC 2606) ne sortent, et que le registre
+exporte toujours `getProviderInfo` et `getProvider` — il n'a pas été amputé pour
+faire passer le test.
+
+### Ce que ces tests ne prouvent pas
+
+- **Aucun appel HTTP réel à Next** : routes, middlewares et cache ne sont pas
+  exercés. Le test appelle la fonction `GET` exportée et sérialise sa réponse.
+- **Le registre réel n'est pas exercé** — et il n'a plus besoin de l'être depuis
+  cette route, puisqu'elle ne l'importe pas. Cela reste vrai pour l'écran
+  `/assistant` (`page.tsx:40`), qui l'appelle directement.
+- **La décision de réduire la surface n'a pas été confrontée à un pentest** : on
+  prouve une absence de champ, pas une résistance à une attaque.
+
+### Réserve à consigner
+
+`timestamp` a été retiré de la réponse au titre du « uniquement » de la consigne.
+Un moniteur qui l'utilisait pour dater la mesure ou détecter un cache ne l'a
+plus ; les en-têtes HTTP (`Date`) restent disponibles. Aucun client de ce dépôt
+ne consommait ce champ.

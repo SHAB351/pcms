@@ -1,34 +1,31 @@
 import { NextResponse } from "next/server";
 import { isSupabaseConfigured } from "@/lib/config";
-import { getProviderInfo } from "@/lib/ai/registry";
 
 /**
  * Sonde de santé pour la supervision.
  *
- * Elle n'expose aucun secret : uniquement des booléens et la description du
- * fournisseur d'IA. `getProviderInfo()` ne transmet ni clé d'API ni URL
- * complète — la sonde se contente de la recopier. Volontairement publique
- * (pas de session) pour être appelable par un moniteur externe.
+ * Publique et **non authentifiée** par conception : un moniteur externe doit
+ * pouvoir l'appeler sans session. C'est précisément ce qui impose de réduire sa
+ * réponse au strict nécessaire — elle ne porte que `status` et
+ * `supabaseConfigured`.
+ *
+ * Aucune métadonnée du fournisseur d'IA n'est exposée ici. Jusqu'au
+ * 2026-11-10, la réponse contenait un objet `ai` (`id`, `label`, `isLocal`,
+ * `isConfigured`, `fallback`) et `aiProvider` : `label` livrait le **nom exact
+ * du modèle** configuré et `isConfigured` la **présence d'une clé d'API** à un
+ * appelant anonyme. Ces informations restent disponibles **à l'intérieur de
+ * l'application**, via `getProviderInfo()` (`src/lib/ai/registry.ts`), que cette
+ * route n'importe volontairement plus.
+ *
+ * Décision : `DECISIONS.md` §25 (option 2, validée par le propriétaire).
  */
 export async function GET() {
   const supabaseConfigured = isSupabaseConfigured();
-  const provider = getProviderInfo();
 
   return NextResponse.json(
     {
       status: supabaseConfigured ? "ok" : "configuration_incomplete",
       supabaseConfigured,
-      ai: {
-        id: provider.id,
-        label: provider.label,
-        isLocal: provider.isLocal,
-        isConfigured: provider.isConfigured,
-        fallback: provider.fallback,
-      },
-      // Conservé pour les moniteurs existants : identifiant du fournisseur
-      // réellement actif, jamais la valeur brute de la variable d'environnement.
-      aiProvider: provider.id,
-      timestamp: new Date().toISOString(),
     },
     { status: supabaseConfigured ? 200 : 503 },
   );
