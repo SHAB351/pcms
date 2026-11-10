@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+/*
+ * Sources scannées pour les classes utilitaires.
+ *
+ * Ce fichier est dans `src/app/`, donc la détection automatique prendrait `src/app`
+ * comme racine : les classes utilisées dans `src/components` et `src/lib` seraient
+ * ignorées. Le chemin est relatif à CE fichier (`../../src` = `src/`).
+ *
+ * La compilation passe par PostCSS (`postcss.config.mjs`), pas par le loader
+ * Turbopack : voir DECISIONS.md §19.
+ */
+@source "../../src";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+/* Keyboard focus stays visible everywhere: this is an internal tool used all day. */
+:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
