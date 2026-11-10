@@ -1,12 +1,23 @@
 import { NextResponse } from "next/server";
-import { aiConfig, isSupabaseConfigured } from "@/lib/config";
+import { isSupabaseConfigured } from "@/lib/config";
 
 /**
  * Sonde de santé pour la supervision.
  *
- * Elle n'expose aucun secret : uniquement des booléens et le nom du fournisseur
- * d'IA. Volontairement publique (pas de session) pour être appelable par un
- * moniteur externe.
+ * Publique et **non authentifiée** par conception : un moniteur externe doit
+ * pouvoir l'appeler sans session. C'est précisément ce qui impose de réduire sa
+ * réponse au strict nécessaire — elle ne porte que `status` et
+ * `supabaseConfigured`.
+ *
+ * Aucune métadonnée du fournisseur d'IA n'est exposée ici. Jusqu'au
+ * 2026-11-10, la réponse contenait un objet `ai` (`id`, `label`, `isLocal`,
+ * `isConfigured`, `fallback`) et `aiProvider` : `label` livrait le **nom exact
+ * du modèle** configuré et `isConfigured` la **présence d'une clé d'API** à un
+ * appelant anonyme. Ces informations restent disponibles **à l'intérieur de
+ * l'application**, via `getProviderInfo()` (`src/lib/ai/registry.ts`), que cette
+ * route n'importe volontairement plus.
+ *
+ * Décision : `DECISIONS.md` §25 (option 2, validée par le propriétaire).
  */
 export async function GET() {
   const supabaseConfigured = isSupabaseConfigured();
@@ -15,8 +26,6 @@ export async function GET() {
     {
       status: supabaseConfigured ? "ok" : "configuration_incomplete",
       supabaseConfigured,
-      aiProvider: aiConfig.provider,
-      timestamp: new Date().toISOString(),
     },
     { status: supabaseConfigured ? 200 : 503 },
   );

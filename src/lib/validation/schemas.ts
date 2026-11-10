@@ -97,6 +97,12 @@ export type AiBriefInput = z.infer<typeof aiBriefSchema>;
 /** Texte qu'un document source peut fournir : sans analyseur, seuls ces types sont lisibles. */
 export const AI_READABLE_DOCUMENT_MIME_TYPES = ["text/plain", "text/csv"] as const;
 
+/**
+ * Doit rester aligné sur `MAX_EXTERNAL_SOURCE_CHARS` dans
+ * `src/lib/ai/confidentiality.ts` : un écart ferait accepter ici un texte que
+ * l'envoi externe refusera, ou l'inverse. Vérifié par un test croisé dans
+ * `tests/assistant.test.mjs`.
+ */
 export const AI_MAX_SOURCE_CHARS = 60_000;
 
 export const assistantRequestSchema = z

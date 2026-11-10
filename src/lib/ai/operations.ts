@@ -143,6 +143,21 @@ const INSTRUCTIONS: Record<AiOperationId, string> = {
     "Rédige un premier jet à partir de la consigne et des éléments fournis. Marque « [à compléter] » partout où une information manque. Termine par la liste des points à vérifier avant publication.",
 };
 
+/**
+ * Délimiteur du bloc « texte à traiter ».
+ *
+ * Un délimiteur fixe `"""` peut être refermé par un document qui contient
+ * lui-même cette suite : la fin du document serait alors lue comme une
+ * instruction (injection de prompt). On choisit donc une suite de guillemets
+ * plus longue que toute suite présente dans le texte. Sans suite de trois
+ * guillemets ou plus, le délimiteur reste `"""`.
+ */
+function sourceFence(text: string): string {
+  const suites = text.match(/"+/g) ?? [];
+  const plusLongue = suites.reduce((max, suite) => Math.max(max, suite.length), 0);
+  return '"'.repeat(Math.max(3, plusLongue + 1));
+}
+
 export function buildPrompt(input: AiPromptInput): AiPrompt {
   const operation = getOperation(input.operation);
   const parts: string[] = [INSTRUCTIONS[input.operation]];
@@ -158,7 +173,9 @@ export function buildPrompt(input: AiPromptInput): AiPrompt {
   parts.push("", "Consigne de l'utilisateur :", input.brief.trim());
 
   if (input.sourceText && input.sourceText.trim().length > 0) {
-    parts.push("", "Texte à traiter (seule source autorisée) :", '"""', input.sourceText.trim(), '"""');
+    const source = input.sourceText.trim();
+    const fence = sourceFence(source);
+    parts.push("", "Texte à traiter (seule source autorisée) :", fence, source, fence);
   } else if (operation.requiresSource) {
     parts.push(
       "",

@@ -50,3 +50,6 @@ next-env.d.ts
 
 # brouillons de travail, jamais versionnés
 /scratchpad/
+
+# traces brutes des sessions autonomes : preuve locale, pas du contenu de dépôt
+/docs/autonomie/*.log

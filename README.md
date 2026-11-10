@@ -194,6 +194,127 @@ supabase/migrations/               # SQL versionné
 
 ---
 
+## Équipe d'agents et travail autonome
+
+Le dépôt définit une petite équipe d'agents (`.claude/agents/`), deux skills
+projet (`.claude/skills/`) et deux commandes (`.claude/commands/`). Les fiches
+d'état et de suivi vivent dans `docs/autonomie/`.
+
+### Les cinq agents
+
+| Agent | Rôle |
+| --- | --- |
+| `cto` | Directeur technique et orchestrateur : choisit **une** tâche dans `TACHES.md`, la délègue au bon agent, exige une preuve (commande et sortie), tient le journal, met à jour l'état et arrête la session à l'échéance. Il ne code pas les tâches de fond, sauf une retouche de moins d'une trentaine de lignes sur un seul fichier. |
+| `developpeur` | Implémente une tâche bornée (code, migration SQL écrite mais non exécutée, test), lance `typecheck`, `lint` et les tests, et rend le diff significatif avec les sorties de commandes. Il ne conçoit pas l'architecture et ne décide pas du produit. |
+| `qa` | Contrôleur qualité indépendant : exécute la chaîne de vérification, cherche à faire échouer le travail, et rend un constat par affirmation (`CONFIRMÉ`, `PARTIEL`, `NON PROUVÉ`, `RÉFUTÉ`, `BLOQUANT`). Il ne corrige rien et n'écrit aucun fichier. |
+| `securite` | Relecture de sécurité d'un diff ou d'un fichier sensible : authentification, rôles, politiques RLS, stockage, confidentialité de l'assistant IA, secrets. Verdict `BLOQUANT` / `AVERTISSEMENT` / `RAS`, ancré sur `chemin:ligne`. Il ne modifie rien. |
+| `documentation` | Tient `README.md` et `DECISIONS.md` (et `CLAUDE.md` quand l'organisation de l'équipe change), dans le style de la maison : ce qui est vérifié, ce qui est écrit mais non exercé, ce qui est bloqué. Il n'invente ni résultat ni mesure. |
+
+### Les deux skills
+
+| Skill | Ce qu'il couvre |
+| --- | --- |
+| `pcms-conventions` | Les règles de maison : structure des couches (où lire, où écrire), discipline SQL/RLS, interdiction des secrets, module Documents gelé, et les pièges propres à cette machine (Smart App Control, Tailwind épinglé, Server Actions non reproductibles depuis Node). |
+| `pcms-verification` | Ce que chaque commande prouve réellement et ce qu'elle ne prouve pas, aux trois niveaux (logique pure, données réelles, navigateur), avec les prérequis, les codes de sortie de `verify:assistant` et les quatre pièges qui produisent un faux résultat. |
+
+### Les deux commandes
+
+| Commande | Effet |
+| --- | --- |
+| `/session-autonome [heures]` | Démarre une session bornée dans le temps (4 h par défaut) : ouvre `SESSION.md`, refuse de travailler sur `main` (la branche attendue est `feature/assistant-ia`), boucle tâche par tâche avec preuve, puis remplit `RAPPORT.md`. |
+| `/etat-session` | Affiche l'état de la session **en lecture seule** : échéance, tâche en cours, compteur de tâches prouvées et écartées, prochaine tâche, écarts en attente d'un humain. Ne modifie aucun fichier. |
+
+### Les quatre fiches de `docs/autonomie/`
+
+| Fiche | Fonction |
+| --- | --- |
+| `TACHES.md` | **Quoi faire** : la file des tâches, avec leur agent, leur critère d'acceptation et leur statut (`PROUVÉ`, `ÉCRIT`, `À FAIRE`, `EN COURS`, `BLOQUÉ-HUMAIN`). |
+| `SESSION.md` | **Où on en est** : début, échéance (epoch), branche, tâche en cours, budget consommé, déroulé et écarts. |
+| `JOURNAL.md` | **Ce qui a été fait**, en ajout seul : une ligne par action, avec la commande et son résultat quand il y en a un. Une ligne ne se réécrit jamais, ne s'efface jamais. |
+| `RAPPORT.md` | **Le bilan** de fin de session : ce qui est prouvé, ce qui est écrit mais non exercé, ce qui n'a pas été fait et pourquoi. |
+
+Ces fiches sont sous `docs/` et **pas** sous `.claude/` : l'outil traite
+`.claude/` comme de la configuration et refuse toute écriture d'agent dans ce
+dossier (« sensitive file »). L'essai du 2026-11-10 l'a montré : le code était
+livré, mais l'état, le journal et le rapport étaient impossibles à écrire.
+
+### Lancer une session autonome
+
+```bash
+claude -p --agent cto --model sonnet --permission-mode acceptEdits \
+  --max-budget-usd <N> \
+  --allowedTools "Read,Grep,Glob,Edit,Write,Bash(npm test:*),Bash(npm run typecheck:*),Bash(npm run lint:*),Bash(node --test:*)" \
+  --output-format text \
+  > docs/autonomie/session.log 2>&1 <<< "SESSION AUTONOME..."
+```
+
+**`--allowedTools` n'est pas optionnel.** Sans lui, en mode `-p`, **toute**
+commande `Bash` passe par une autorisation que personne n'accorde : la session
+reçoit `This command requires approval` à chaque vérification et ne peut rien
+prouver. C'est la cause exacte de l'échec de la session du 2026-11-10, où aucune
+tâche n'a pu être prouvée alors que le code était écrit.
+
+Une **seule** occurrence de l'option, liste séparée par des virgules : elle est
+*variadique* et avale le prompt positionnel, d'où le here-string (`<<<`) — ou,
+à défaut, un prompt passé **avant** les options. La syntaxe à deux-points-étoile
+a été vérifiée le 2026-11-10 : `Bash(npm run lint:*)` laisse passer
+`npm run lint`, `Bash(node --version:*)` laisse passer `node --version`.
+
+`-p` (impression) est la seule forme qui **impose** un plafond de dépense :
+`--max-budget-usd` n'agit qu'avec `--print`. Le plafond s'applique **par
+processus** : deux lancements simultanés valent deux fois le plafond.
+
+`--model sonnet` est nécessaire lorsqu'un agent sert de session (`--agent cto`) :
+le champ `model:` du frontmatter de l'agent ne s'applique pas dans ce cas, et une
+session lancée sans `--model` hérite du modèle par défaut de la machine. **Sur ce
+poste, `~/.claude/settings.json` route l'API vers un service compatible
+(`ANTHROPIC_BASE_URL`, `ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-flash`) : l'alias
+`sonnet` y résout vers `deepseek-flash`.** Écrire `--model sonnet` ne fait donc
+pas tourner la session sur Sonnet — il évite seulement d'hériter d'un défaut non
+maîtrisé. Ne pas présenter cette machine comme travaillant sur Sonnet.
+
+### Arrêter une session
+
+`-p` n'a pas de `claude attach` : on arrête la session en tuant le processus
+(`Ctrl-C`, ou `taskkill /PID <pid>`).
+
+**Arrêter veut dire tuer `claude.exe`, pas l'enveloppe shell.** Le 2026-11-10,
+un arrêt rapporté comme réussi n'a tué que le wrapper : le processus a continué
+huit minutes, écrit dans le dépôt et tronqué la trace du lancement suivant, ce
+qui a fait croire à un « écrivain concurrent ». Après **tout** arrêt, vérifier —
+et tuer ce qui reste :
+
+```powershell
+claude agents --json            # doit ne plus lister de session dans Dev\pcms
+Get-Process claude -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+
+Avec `claude --bg`, il n'y a **aucun plafond technique** de dépense — seulement
+l'échéance de temps inscrite dans `SESSION.md` — et le dossier doit en plus être
+approuvé (confiance), ce que `-p` ne demande pas.
+
+### Limites
+
+- Une session **s'arrête net** sur une autorisation qu'elle n'a pas le droit de
+  se donner : il ne faut pas compter sur elle pour avancer sans surveillance sur
+  une action sensible.
+- Interdits pendant une session : `git push`, déploiement, publication. Aucune
+  migration n'est exécutée par un agent — les fichiers de
+  `supabase/migrations/` s'appliquent à la main dans le SQL Editor.
+- Le module Documents est **gelé** : on n'y touche que sur nécessité technique
+  démontrée, consignée au journal avant la modification.
+- Ce n'est **pas** un travail d'arrière-plan non surveillé : quelqu'un lance la
+  session, la surveille et tranche ce qu'un agent n'a pas le droit de faire.
+- Lors de la session du 2026-11-10, les commandes de vérification (`npm test`,
+  `npm run typecheck`, `npm run lint`) ont été refusées par le harnais
+  (`This command requires approval`) parce que le lancement n'avait pas
+  `--allowedTools` ; la session s'est close au lieu de produire du travail
+  invérifiable. Le défaut était dans la ligne de lancement, pas dans
+  l'installation — et un second processus mal arrêté a travaillé en parallèle.
+  Le détail est dans `docs/autonomie/RAPPORT.md` et `docs/autonomie/JOURNAL.md`.
+
+---
+
 ## Sécurité
 
 Ce qui est réellement en place :

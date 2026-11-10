@@ -548,3 +548,232 @@ règles de validation ou d'historique n'a été exercée en base** — elles son
 **Piège à ne pas répéter :** une Server Action n'est pas reproductible depuis
 Node (voir §22). Le parcours de l'assistant se vérifie avec un vrai navigateur,
 d'où `scripts/verifier-assistant.mjs`, sur le modèle de `verifier-navigateur.mjs`.
+
+---
+
+## 24. Équipe d'agents et travail autonome — 10 novembre 2026
+
+**Le problème posé.** Le travail restant (tests, audits, documentation) est
+borné et vérifiable, mais il demande du temps suivi. Un agent lancé sur ce dépôt
+doit donc être **contrôlable** (on sait ce qu'il fait, et sa preuve est une
+commande, pas une affirmation), **économe** (le plafond n'est pas une intention)
+et **fiable** (l'état survit à la session). Une équipe de cinq agents a été
+créée : `cto`, `developpeur`, `qa`, `securite`, `documentation`, avec deux skills
+projet (`pcms-conventions`, `pcms-verification`), deux commandes
+(`/session-autonome`, `/etat-session`) et quatre fiches de suivi — `TACHES.md`,
+`SESSION.md`, `JOURNAL.md`, `RAPPORT.md`.
+
+**Décisions structurantes :**
+
+1. **Le CTO orchestre, il ne code pas.** Il choisit *une* tâche, la délègue au
+   bon agent, exige la preuve et tient les fiches. Seule exception, pour la
+   dépense : une retouche de moins d'une trentaine de lignes sur un seul fichier,
+   qu'il fait lui-même plutôt que de payer une délégation. Un orchestrateur qui
+   code devient un développeur qui oublie d'orchestrer.
+2. **Un fichier n'a qu'un seul auteur à la fois.** Ni deux sous-agents, ni le
+   fil principal pendant qu'un sous-agent y travaille. Le CTO attend la fin
+   d'une tâche avant d'en déléguer une qui recoupe les mêmes fichiers, et
+   répartit les tâches sur des fichiers indépendants. Un `git status` qui montre
+   un fichier hors de la liste autorisée pour la tâche en cours vaut tâche
+   **écartée**, pas tâche réussie. Cette règle a un coût : elle interdit le
+   parallélisme sur un même fichier, elle ne l'interdit pas sur des fichiers
+   distincts.
+3. **Les fiches de suivi vivent dans `docs/autonomie/`, jamais sous `.claude/`.**
+   L'outil traite `.claude/` comme de la configuration et **refuse toute écriture
+   d'agent** dans ce dossier (« sensitive file »). L'essai du 2026-11-10 l'a
+   établi quatre fois : le code était livré, mais l'état, le journal et le
+   rapport étaient impossibles à écrire. Les fichiers de *configuration* des
+   agents et des skills restent, eux, sous `.claude/`.
+4. **`PROUVÉ` veut dire « une commande l'a montré », pas « l'agent l'affirme ».**
+   Un statut ne monte jamais de `ÉCRIT` à `PROUVÉ` sans une ligne de journal qui
+   contient la commande et sa sortie. Le vocabulaire est fermé : `PROUVÉ`,
+   `ÉCRIT`, `À FAIRE`, `EN COURS`, `BLOQUÉ-HUMAIN`.
+5. **L'indépendance des contrôleurs est structurelle, pas déclarative.** `qa` et
+   `securite` n'ont pas l'outil `Write` : ils ne peuvent pas corriger ce qu'ils
+   jugent, donc ils ne peuvent pas maquiller un constat. Un contrôleur qui
+   répare finit par juger ce qu'il a réparé.
+6. **Le plafond de dépense n'est technique que sous `-p`.** `--max-budget-usd`
+   n'agit qu'avec `--print`, et là il **coupe réellement** ; `claude --bg` n'a
+   aucun plafond. Le plafond s'applique **par processus** : deux lancements
+   simultanés valent deux fois le plafond. Toute autre forme d'arrêt sur budget
+   est une estimation que l'agent doit reporter lui-même, écrite comme telle.
+7. **`--allowedTools` fait partie du contrat de lancement.** Sans lui, en mode
+   `-p`, **toute** commande `Bash` passe par une autorisation que personne
+   n'accorde, et la session ne peut rien prouver. L'option est *variadique* :
+   une seule occurrence, liste séparée par des virgules, et le prompt passé par
+   here-string (ou avant les options).
+8. **Le modèle réel de cette machine n'est pas Sonnet.** Les cinq agents portent
+   `model: sonnet` dans leur frontmatter, mais ce champ **ne s'applique pas**
+   quand l'agent sert de session (`--agent cto`), et `~/.claude/settings.json`
+   route l'API vers un service compatible avec
+   `ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-flash`. L'alias `sonnet` résout donc
+   vers `deepseek-flash` : rien dans ce dépôt ne doit présenter l'équipe comme
+   travaillant sur Sonnet. Les deux seules choses que `--model sonnet` garantit
+   sont la stabilité du choix et l'absence d'héritage d'un défaut non maîtrisé.
+9. **Aucun travail d'arrière-plan non surveillé.** Une session est lancée,
+   surveillée et close par quelqu'un. Elle **s'arrête net** sur une autorisation
+   qu'elle n'a pas le droit de se donner — c'est un comportement attendu, pas une
+   panne. Interdits absolus pendant une session : `git push`, déploiement,
+   publication, migration exécutée, secret affiché, politique RLS touchée, toute
+   modification du module Documents.
+10. **Une heure traite 3 à 5 tâches, pas sept.** Le CTO choisit, il ne coche
+    pas. Si la file est épuisée avant l'échéance, la session se **clôt** : on
+    n'invente pas de travail pour remplir le temps.
+
+**Vérifié réellement :**
+
+- écriture d'un agent dans `docs/autonomie/` — sonde `claude -p --agent cto` :
+  fichier créé, réponse `ECRIT` ;
+- plafond de dépense coupé par le CLI — `claude -p --max-budget-usd 0.01` →
+  `Error: Exceeded USD budget (0.01)`, code de sortie 1 ;
+- syntaxe `--allowedTools` — `Bash(npm run lint:*)` laisse passer `npm run lint`
+  (`> eslint .`) et `Bash(node --version:*)` laisse passer `node --version`
+  (`v24.18.0`) ;
+- essai de 30 minutes : **2 tâches prouvées** (T-01, T-02), 4 min 07 s,
+  **1,98 USD**, soit ~29 USD/h ;
+- état du dépôt au 10 novembre : `npm test` **60/60** (dont les 9 tests de T-04),
+  `typecheck` et `lint` sans diagnostic.
+
+**Ce qui a échoué, et qu'il ne faut pas maquiller :**
+
+- **La session d'une heure n'a rien prouvé.** Lancée sans `--allowedTools`, elle
+  a reçu `This command requires approval` à chaque vérification et s'est close
+  au bout de 2 min 50 s. Le défaut était dans la ligne de lancement, pas dans
+  l'installation.
+- **Un processus mal arrêté a travaillé en parallèle.** L'outil d'arrêt a tué
+  l'enveloppe shell, pas `claude.exe` : l'orphelin (PID 10064) a continué huit
+  minutes, écrit trois fichiers et délégué une tâche, en concurrence avec un
+  second lancement, et les deux ont écrit dans **le même fichier de trace**. Le
+  CTO avait raison de signaler un écrivain concurrent ; il s'agissait de moi.
+  Coût réel de la phase : **≈ 4,65 USD** (1,51 + 3,14) pour une exposition
+  théorique de 20 USD.
+- **Le modèle annoncé n'est pas celui qui sert** (décision 8).
+
+**Pièges à ne pas répéter :** écrire une fiche de suivi sous `.claude/` ;
+lancer `-p` sans `--allowedTools` ; arrêter une session en tuant le wrapper ;
+lancer deux sessions à la fois sur le même dépôt ; passer le prompt après
+`--allowedTools` sans here-string.
+
+---
+
+## 25. Sonde `/api/sante` — divulgation de la configuration IA
+
+**Statut : DÉCISION VALIDÉE le 2026-11-10 par le propriétaire — option 2.**
+
+**La règle retenue.** La route publique `/api/sante` n'expose **que** `status`
+et `supabaseConfigured`. Les métadonnées du fournisseur d'IA (identifiant,
+libellé, caractère local, présence d'une clé, indicateur de repli) **restent
+internes** : elles demeurent disponibles dans l'application via
+`getProviderInfo()` (`src/lib/ai/registry.ts:54-61`), que la route n'importe
+plus. Le registre et son fonctionnement n'ont pas été touchés.
+
+**Le fait qui a motivé la décision.** `GET /api/sante`
+(`src/app/api/sante/route.ts`) est **publique et non authentifiée** — c'est
+délibéré, pour qu'un moniteur externe puisse l'appeler sans session. Jusqu'au
+2026-11-10, sa réponse portait un objet `ai` construit par `getProviderInfo()`,
+plus un champ `aiProvider` conservé pour les moniteurs existants.
+
+**Ce que la route exposait avant la décision, et ce que cela apprenait à un tiers :**
+
+| Champ | Valeur réelle transmise | Ce que cela révèle |
+| --- | --- | --- |
+| `id`, `aiProvider` | `"mock"` ou `"openai-compatible"` | la famille de fournisseur |
+| `label` | `Service externe (${model})` ou `Modèle local (${model})` (`providers/openai-compatible.ts:56-58`) | **le nom exact du modèle configuré** |
+| `isLocal` | booléen | si le point d'accès est local ou distant |
+| `isConfigured` | `Boolean(baseUrl && model && (apiKey \|\| local))` (`openai-compatible.ts:51`) | **si une clé d'API est présente** |
+| `fallback` | booléen | si `AI_PROVIDER` porte une valeur inconnue |
+
+**Ce qui ne sortait pas non plus à l'époque — vérifié par lecture.** Ni la clé
+d'API, ni l'URL de base, ni un jeton, ni un en-tête. `getProviderInfo()` ne
+transmet que `id`, `label`, `isLocal`, `isConfigured`, `fallback`, et la route
+n'en recopiait que ces cinq champs plus `provider.id` (ancienne version de
+`sante/route.ts`). Le champ `configurationHint` — celui qui nomme `AI_BASE_URL`,
+`AI_MODEL`, `AI_API_KEY` (`openai-compatible.ts:63`) — **n'était pas transmis**.
+
+**Ce que les tests prouvaient alors, et ce qu'ils prouvent maintenant.** Avant
+la décision, `tests/sante.test.mjs` (3 tests) exécutait la route avec
+`getProviderInfo` **bouchonné** : il prouvait que la route ne recopiait que les
+cinq champs prévus et n'ajoutait ni clé ni URL (clé factice `sk-TEST-SECRET`,
+hôte RFC 2606 `secret.example`). Il ne prouvait **pas** ce que contenait la
+vraie `label` — cela avait été établi par lecture de
+`providers/openai-compatible.ts:56-58`, où `label` n'interpole que `model`.
+
+Depuis la décision, ce bouchon a disparu du test, et c'est un gain de preuve :
+la route n'importe plus le registre, donc le contrôle porte sur les
+**spécificateurs d'importation** (`['@/lib/config', 'next/server']`). La partie
+« aucune métadonnée IA » ne dépend plus d'aucun bouchon — elle est structurelle.
+**Aucun test n'exerce toujours le registre réel** ; il n'en a plus besoin depuis
+cette route, mais cela reste vrai pour l'écran `/assistant`, qui l'appelle
+directement.
+
+**Le risque, nommé sans l'exagérer.** Ce n'est pas une fuite de secret, c'est
+une **divulgation d'information de configuration** à un appelant non
+authentifié : un tiers apprend quel modèle sert et si le service est armé. Cela
+permet de viser des techniques d'injection ou de contournement connues pour ce
+modèle précis, et de savoir qu'une organisation expose publiquement un point
+d'entrée IA. La portée reste bornée : la sonde n'exécute aucune génération, ne
+lit aucune donnée et ne permet aucune écriture.
+
+**Ce qui a été appliqué (option 2, 2026-11-10).**
+
+- `src/app/api/sante/route.ts` : la réponse ne contient plus que `status` et
+  `supabaseConfigured`. `timestamp` a été retiré au même titre — la consigne
+  était « uniquement ». Les codes HTTP ne changent pas : `200` si Supabase est
+  configuré, `503` sinon.
+- L'import de `@/lib/ai/registry` a été retiré de la route. Ce n'est pas un
+  détail de propreté : tant que la route n'importe pas le registre, elle **ne
+  peut pas** en recopier un champ, quel que soit l'état du fournisseur.
+- `tests/sante.test.mjs` : réécrit autour de six tests, dont un contrôle des
+  spécificateurs d'importation (`['@/lib/config', 'next/server']`) et un
+  contrôle que le registre exporte toujours `getProviderInfo` et `getProvider`.
+
+**Conséquence à assumer.** Les moniteurs externes qui lisaient `ai`, `label`,
+`isConfigured`, `id`, `aiProvider`, `isLocal` ou `fallback` ne reçoivent plus
+ces champs. Aucun client de ce dépôt ne les consomme (recherche `api/sante` et
+`getProviderInfo` : la seule autre lecture de `getProviderInfo` est
+`src/app/(app)/assistant/page.tsx:40`, un appel direct, hors de cette route).
+Un moniteur qui veut superviser l'IA devra passer par une sonde authentifiée,
+qui n'existe pas encore.
+
+**Audit des consommateurs — 2026-11-10.** Recherche menée sur tout le dépôt,
+champs `ai`, `aiProvider`, `timestamp`, `label`, `isConfigured` :
+
+- **Aucun workflow GitHub** (`.github/` absent), **aucune configuration de
+  déploiement** (ni `Dockerfile`, ni `vercel.json`, ni `netlify.toml`, ni
+  `fly.toml`, ni `render.yaml`, ni `Procfile`), **aucune configuration de
+  supervision**. Les seuls `.toml` du dépôt sont les définitions d'agents sous
+  `.codex/`.
+- **Aucun `fetch(` vers `/api/sante`** dans `src/` : le seul `fetch(` de `src/`
+  est l'appel du fournisseur (`providers/openai-compatible.ts:88`).
+- **Aucun script de `scripts/`** ne cite `/api/sante`. Les quatre
+  (`verifier-admin`, `verifier-assistant`, `verifier-documents`,
+  `verifier-navigateur`) pilotent l'application, pas la sonde. `README.md`
+  décrit la route (`:176`, `:408`) et se limite à ses codes HTTP.
+- Les lectures de `label`, `isConfigured` et `isLocal` viennent d'appels
+  **directs** à `getProviderInfo()` (`assistant/page.tsx:40`,
+  `parametres/page.tsx:94`) ou de props qui en dérivent — jamais de la réponse de
+  la route.
+- `timestamp` n'apparaît plus que dans les colonnes SQL `timestamptz` et dans la
+  documentation de cette décision.
+
+**Conclusion, bornée à ce qui a été observé.** Aucun consommateur des champs
+supprimés n'est **identifié dans ce dépôt**, et aucune supervision externe n'y
+est **configurée ni documentée**. Cela n'établit pas qu'aucun consommateur
+externe ne puisse exister : un moniteur peut vivre hors du dépôt, et le code
+supprimé revendiquait explicitement des « moniteurs existants » sans en nommer
+aucun. La vérification qui manquerait — interroger l'hébergeur, le service de
+supervision et les journaux d'accès — n'est pas accessible depuis ce dépôt.
+
+**Options rejetées, conservées pour la mémoire de l'arbitrage :**
+
+- **Option 1 d'origine — publier en l'état.** Écartée : le nom exact du modèle
+  devenait public.
+- **Option 3 d'origine — variante médiane** (`id`, `isLocal`, `fallback`
+  conservés ; `label` et `isConfigured` retirés). Écartée : `id` et `isLocal`
+  suffisent déjà à décrire la posture de déploiement à un anonyme.
+- **Option 4 d'origine — jeton de supervision.** Écartée : elle règle le
+  contrôle d'accès mais laisse fuiter le contenu, et ajoute un secret de plus à
+  administrer.
+
+Une sonde authentifiée pour la supervision IA reste **à construire** si le
+besoin apparaît ; c'est un travail distinct, non engagé ici.

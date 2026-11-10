@@ -80,6 +80,11 @@ export function decideSend(input: SendDecisionInput): SendDecision {
  * Garde-fou de taille : un envoi externe au-delà de cette limite est refusé
  * plutôt que tronqué en silence. Tronquer un document confidentiel pour le faire
  * tenir dans un quota est une fuite partielle, pas une protection.
+ *
+ * Doit rester aligné sur `AI_MAX_SOURCE_CHARS` dans
+ * `src/lib/validation/schemas.ts` : un écart ferait accepter par la validation
+ * un texte que cet envoi refusera, ou l'inverse. Le test croisé vit dans
+ * `tests/assistant.test.mjs`.
  */
 export const MAX_EXTERNAL_SOURCE_CHARS = 60_000;
 

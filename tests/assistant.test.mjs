@@ -169,6 +169,18 @@ test('un envoi externe trop volumineux est refusé, jamais tronqué', () => {
   assert.equal(confidentiality.checkExternalSize({ external: false, allowed: true }, 10_000_000).ok, true);
 });
 
+// --- Cohérence des limites de source ---------------------------------------
+
+test('la limite de source de Zod et celle de la confidentialité restent alignées', () => {
+  assert.equal(
+    schemas.AI_MAX_SOURCE_CHARS,
+    confidentiality.MAX_EXTERNAL_SOURCE_CHARS,
+    "AI_MAX_SOURCE_CHARS (validation) et MAX_EXTERNAL_SOURCE_CHARS (confidentialité) " +
+      "doivent rester égales : un écart ferait valider un texte que l'envoi externe " +
+      'refusera ensuite, ou refuserait un texte que rien n\'empêche d\'envoyer.',
+  );
+});
+
 // --- Validation d'une demande ----------------------------------------------
 
 function parse(overrides = {}) {
